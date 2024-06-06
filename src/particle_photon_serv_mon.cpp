@@ -8,7 +8,7 @@
 
 // Include Particle Device OS APIs
 #include "Particle.h"
-
+#include "prototypes_defs.hpp"
 #define FSM_STATE_WAIT_CONV 2
 #define FSM_STATE_ACTIVE 1
 #define FSM_STATE_RST    0
