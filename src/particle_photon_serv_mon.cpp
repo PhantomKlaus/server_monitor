@@ -19,11 +19,27 @@ SYSTEM_MODE(AUTOMATIC);
 
 // Run the application and system concurrently in separate threads
 SYSTEM_THREAD(ENABLED);
+void LTM_Timer_callback();
 
 // Show system, cloud connectivity, and application logs over USB
 // View logs with CLI using 'particle serial monitor --follow'
 SerialLogHandler logHandler(9600,LOG_LEVEL_WARN,{{"app",LOG_LEVEL_ALL},{"app.network",LOG_LEVEL_INFO}});
 Timer LTM_timer(10,LTM_Timer_callback,false);
+
+time32_t time_var_glb;
+char json_buffer[256];
+JSONBufferWriter json_writer(json_buffer,sizeof(json_buffer) - 1);
+void PublishTemp(float &temp,time32_t &time_var)
+{
+  String time_str = Time.format(time_var, TIME_FORMAT_ISO8601_FULL);
+  memset(json_buffer, 0, sizeof(json_buffer));
+  json_writer.beginObject();
+  json_writer.name("Temp").value((double) temp,2);
+  json_writer.name("Device_time").value(time_str);
+  json_writer.endObject();
+  json_writer.buffer()[std::min(json_writer.bufferSize(), json_writer.dataSize())] = 0;
+  Particle.publish("JSON Obj",json_writer.buffer(),PRIVATE,NO_ACK);
+}
 
 int LTM01_sensor = D2;
 int LED = D7;
@@ -102,6 +118,10 @@ void LTM_IRQ_Handler()
 void setup() {
   // Put initialization like pinMode and begin functions here
   Log.info("System started");
+  Time.zone(3);
+  Time.setFormat(TIME_FORMAT_ISO8601_FULL);
+  time_var_glb = Time.now();
+  memset(json_buffer, 0, sizeof(json_buffer));
   pinMode(LED,OUTPUT);
   pinMode(LTM01_sensor,INPUT);
   int success = attachInterrupt(LTM01_sensor,LTM_IRQ_Handler,RISING,13,1);
@@ -113,6 +133,9 @@ void setup() {
   {
     Log.error("IRQ installation failed");
   }
+  Log.info("current time: %s", Time.timeStr().c_str());
+  float temp =0.4;
+  PublishTemp(temp,time_var_glb);
 }
 
 // loop() runs over and over again, as quickly as it can execute.
