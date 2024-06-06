@@ -9,11 +9,11 @@
 // Include Particle Device OS APIs
 #include "Particle.h"
 
-#define FSM_STATE_LISTEN 0
+#define FSM_STATE_WAIT_CONV 2
 #define FSM_STATE_ACTIVE 1
-#define FSM_STATE_END    2
-#define FSM_STATE_RST    3
-#define LTM_TIMEOUT_US   22
+#define FSM_STATE_RST    0
+#define LTM_TIMEOUT_US   22UL
+#define LTM_SWTIMER_PER_MS 20MS
 // Let Device OS manage the connection to the Particle Cloud
 SYSTEM_MODE(AUTOMATIC);
 
@@ -23,7 +23,7 @@ SYSTEM_THREAD(ENABLED);
 // Show system, cloud connectivity, and application logs over USB
 // View logs with CLI using 'particle serial monitor --follow'
 SerialLogHandler logHandler(9600,LOG_LEVEL_WARN,{{"app",LOG_LEVEL_ALL},{"app.network",LOG_LEVEL_INFO}});
-
+Timer LTM_timer(10,LTM_Timer_callback,false);
 
 int LTM01_sensor = D2;
 int LED = D7;
@@ -32,37 +32,71 @@ volatile unsigned int  LTM_pulse_count = 0;
 volatile unsigned int  LTM_last_conv_res = 0;
 volatile bool          LTM_conv_read = true;
 volatile unsigned int  fsm_state_var = FSM_STATE_RST;
-void LTM_IRQ_Handler()
+volatile bool          missed_conv = false;
+void LTM_Timer_callback()
 {
-  
-  switch (fsm_state_var)
+  /*Virtual Timer callback from RTOS(SysTick Handler)*/
+  unsigned long int now = micros();
+  /* Handle overflow of the 32bit val */
+  if(now < LTM_last_timestamp)
   {
-    case FSM_STATE_LISTEN:
-    /* code */
-      LTM_pulse_count += 1;
-      LTM_last_timestamp = micros();
-      fsm_state_var = FSM_STATE_ACTIVE;
-      break;
-    case FSM_STATE_ACTIVE:
-      LTM_pulse_count += 1;
-      LTM_last_timestamp = micros();
-      break;
-
-    case FSM_STATE_END:
-
-      break;
+    unsigned long int temp = 0xFFFFFFFFUL - LTM_last_timestamp;
+    LTM_last_timestamp = now;
+    now = now + temp;
+  }
+  switch(fsm_state_var)
+  {
     case FSM_STATE_RST:
       if(LTM_conv_read)
       {
-        fsm_state_var = FSM_STATE_LISTEN;
-        LTM_conv_read = false;
-        LTM_last_timestamp = 0;
+        /*Only RESET and start new conversion if the last one was read*/
         LTM_pulse_count = 0;
+        LTM_conv_read = false;
+        fsm_state_var = FSM_STATE_ACTIVE;
       }
       break;
+    case FSM_STATE_ACTIVE:
+      if(now - LTM_last_timestamp >= LTM_TIMEOUT_US )
+      {
+        /*
+          Timeout elapsed...at least 1 pulse count missing so we are in the pause sequenc
+          Save results and reset.
+        */
+        LTM_last_conv_res = LTM_pulse_count;
+        LTM_conv_read = false;
+        LTM_last_timestamp = now;
+        fsm_state_var = FSM_STATE_RST;
+
+      }
+      /*
+        else keep the active state
+      */
+      break;
     default:
+      fsm_state_var = FSM_STATE_RST;
       break;
   }
+  
+}
+void LTM_IRQ_Handler()
+{
+  switch(fsm_state_var)
+  {
+    case FSM_STATE_ACTIVE:
+      LTM_last_timestamp = micros();
+      LTM_pulse_count += 1;
+      break;
+    case FSM_STATE_RST:
+      missed_conv = true;
+      fsm_state_var = FSM_STATE_WAIT_CONV;
+      break;
+    case FSM_STATE_WAIT_CONV:
+      LTM_last_timestamp = micros();
+      LTM_pulse_count += 1;
+      break;
+  }
+ 
+  
 }
 // setup() runs once, when the device is first turned on
 void setup() {
