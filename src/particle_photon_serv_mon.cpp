@@ -10,7 +10,7 @@
 #include "Particle.h"
 #include "Serial2/Serial2.h"
 #include "prototypes_defs.hpp"
-
+#include "HttpClient.h"
 
 STARTUP(USBSerial1.begin(9600));
 
@@ -18,7 +18,7 @@ STARTUP(USBSerial1.begin(9600));
 #define FSM_STATE_ACTIVE 1
 #define FSM_STATE_RST    0
 #define LTM_TIMEOUT_US   22UL
-#define LTM_SWTIMER_PER_MS 20MS
+#define LTM_SWTIMER_PER_MS 20
 #define USB_SERIAL_RX_BUFF 64
 // Let Device OS manage the connection to the Particle Cloud
 SYSTEM_MODE(AUTOMATIC);
@@ -31,12 +31,14 @@ void LTM_Timer_callback();
 void LTM_IRQ_Handler();
 
 
+//HttpClient http_client_obj;
+
 // Show system, cloud connectivity, and application logs over USB
 // View logs with CLI using 'particle serial monitor --follow'
 SerialLogHandler logHandler(9600,LOG_LEVEL_WARN,{{"app",LOG_LEVEL_ALL},{"app.network",LOG_LEVEL_INFO}});
 
 //RTOS Soft timer 
-Timer LTM_timer(10,LTM_Timer_callback,false);
+Timer LTM_timer(LTM_SWTIMER_PER_MS,LTM_Timer_callback,false);
 //global time variable
 time32_t time_var_glb;
 
@@ -68,8 +70,8 @@ void PublishTemp(float &temp,time32_t &time_var)
 
 volatile unsigned char RX_app_buffer[USB_SERIAL_RX_BUFF];
 volatile unsigned int  data_in_rx_buffer;
-int LTM01_sensor = D2;
-int LED = D7;
+unsigned int LTM01_sensor = D2;
+unsigned int LED = D7;
 volatile unsigned long int LTM_last_timestamp = 0;
 volatile unsigned int  LTM_pulse_count = 0;
 volatile unsigned int  LTM_last_conv_res = 0;
@@ -77,7 +79,7 @@ volatile bool          LTM_conv_read = true;
 volatile unsigned int  fsm_state_var = FSM_STATE_RST;
 volatile bool          missed_conv = false;
 
-
+/*Finite State Machine executed on every edge from LTM sensor*/
 void LTM_IRQ_Handler()
 {
   switch(fsm_state_var)
@@ -89,6 +91,7 @@ void LTM_IRQ_Handler()
     case FSM_STATE_RST:
       missed_conv = true;
       fsm_state_var = FSM_STATE_WAIT_CONV;
+      LTM_pulse_count = 1;
       break;
     case FSM_STATE_WAIT_CONV:
       LTM_last_timestamp = micros();
@@ -98,7 +101,7 @@ void LTM_IRQ_Handler()
  
   
 }
-
+/*Periodic Timer ISR eecuted to check states and run the FSM*/
 void LTM_Timer_callback()
 {
   /*Virtual Timer callback from RTOS(SysTick Handler)*/
@@ -132,11 +135,32 @@ void LTM_Timer_callback()
         LTM_conv_read = false;
         LTM_last_timestamp = now;
         fsm_state_var = FSM_STATE_RST;
-
+        //detachInterrupt(LTM01_sensor);
       }
       /*
         else keep the active state
       */
+      break;
+    case FSM_STATE_WAIT_CONV:
+      if(now - LTM_last_timestamp >= LTM_TIMEOUT_US )
+      {
+        /*
+          Timeout elapsed...at least 1 pulse count missing so we are in the pause sequenc
+          Overrun Conv finished
+        */
+        LTM_pulse_count = 0;
+        if(LTM_conv_read)
+        {
+          /*Do RST HERE*/
+          /*Only RESET and start new conversion if the last one was read*/
+          LTM_conv_read = false;
+          fsm_state_var = FSM_STATE_ACTIVE;
+        }
+        else
+        {
+          fsm_state_var = FSM_STATE_RST;
+        }
+      }
       break;
     default:
       fsm_state_var = FSM_STATE_RST;

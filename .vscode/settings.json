@@ -6,5 +6,6 @@
     },
     "particle.firmwareVersion": "3.3.1",
     "particle.targetPlatform": "photon",
-    "particle.targetDevice": "33003b001447353136383631"
+    "particle.targetDevice": "33003b001447353136383631",
+    "C_Cpp.errorSquiggles": "enabled"
 }
